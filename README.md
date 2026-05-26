@@ -4,9 +4,15 @@ Aplicação Streamlit para resolver o problema dos jarros de água com vários j
 
 ## Executar
 
-```powershell
+```powershell/cmd
 pip install -r requirements.txt
 streamlit run app.py
+ou se estiver com problemas para importar o streamlit. pode instalar anaconda e adicione streamlitenv 
+activate base
+C:\o diretorio completo onde esta o projecto\ e depois clica shift+enter
+
+e escreve streamlit run app.py 
+C:\Users\kenym\OneDrive\Documents\ISCTEM\IA\TrabPrt>streamlit run app.py
 ```
 
 ## Funcionalidades
