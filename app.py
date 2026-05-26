@@ -43,7 +43,7 @@ GOAL_MODES = {
 
 def main() -> None:
     st.set_page_config(
-        page_title="Jarros de Água Generalizados",
+        page_title="Jarros de Água ",
         page_icon="💧",
         layout="wide",
         initial_sidebar_state="expanded",
