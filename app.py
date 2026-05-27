@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 from html import escape
 from math import gcd
+from pathlib import Path
 from typing import Any
 
 import streamlit as st
@@ -28,6 +30,20 @@ ALGORITHMS = {
     "A* - busca informada": "astar",
 }
 
+ALGORITHM_NAMES = {
+    "bfs": "BFS",
+    "dfs": "DFS",
+    "ucs": "Custo uniforme",
+    "astar": "A*",
+}
+
+EDUCATIONAL_NOTES = {
+    "BFS": "Explora por camadas. É bom para encontrar a solução com menos operações quando cada acção tem o mesmo peso.",
+    "DFS": "Segue um ramo até ao fundo antes de voltar. Pode encontrar soluções rapidamente, mas não garante a menor sequência.",
+    "Custo uniforme": "Expande primeiro o estado com menor custo acumulado. É indicado quando queremos minimizar volume movimentado.",
+    "A*": "Usa custo acumulado e uma estimativa do que falta. Procura reduzir exploração mantendo uma direcção inteligente.",
+}
+
 COST_MODES = {
     "Número de operações": "operations",
     "Volume total movimentado": "volume",
@@ -40,28 +56,38 @@ GOAL_MODES = {
     "Estado exacto de todos os jarros": "exact_state",
 }
 
+APP_DIR = Path(__file__).resolve().parent
+PITCHER_IMAGE_PATH = APP_DIR / "assets" / "jug_pitcher_transparent.png"
+PITCHER_MASK_PATH = APP_DIR / "assets" / "jug_pitcher_fill_mask.png"
+
 
 def main() -> None:
     st.set_page_config(
-        page_title="Jarros de Água ",
+        page_title="Jarros de Água",
         page_icon="💧",
         layout="wide",
         initial_sidebar_state="expanded",
     )
     inject_theme()
+    hero_pitcher_src = pitcher_image_data_uri()
+    hero_mask_src = pitcher_mask_data_uri()
 
     st.markdown(
-        """
+        f"""
         <section class="app-hero">
             <div>
-                <p class="eyebrow">Busca em espaço de estados</p>
-                <h1>Jarros de Água Generalizados</h1>
-                <p class="hero-copy">Configuração flexível, sequência explicável e visualização passo a passo.</p>
+                <h1>Jarros de Água</h1>
             </div>
             <div class="hero-visual" aria-hidden="true">
-                <div class="hero-jug hero-jug-a"><span></span></div>
+                <div class="hero-photo-jug hero-photo-jug-a" style="--pitcher-mask: url('{hero_mask_src}');">
+                    <div class="hero-water-window"><span></span></div>
+                    <img src="{hero_pitcher_src}" alt="" />
+                </div>
                 <div class="hero-stream"></div>
-                <div class="hero-jug hero-jug-b"><span></span></div>
+                <div class="hero-photo-jug hero-photo-jug-b" style="--pitcher-mask: url('{hero_mask_src}');">
+                    <div class="hero-water-window"><span></span></div>
+                    <img src="{hero_pitcher_src}" alt="" />
+                </div>
             </div>
         </section>
         """,
@@ -77,14 +103,19 @@ def main() -> None:
     )
     validation_messages = validate_reachability_hint(config, reachability)
 
-    left, right = st.columns([0.86, 1.14], gap="large")
-    with left:
+    top_left, top_right = st.columns([1, 1], gap="large")
+    with top_left:
         render_problem_panel(config, validation_messages)
+    with top_right:
+        render_educational_mode()
 
-    with right:
+    resolver_left, resolver_mid, resolver_right = st.columns([1, 1.2, 1], gap="large")
+    with resolver_mid:
         if st.button("Resolver", type="primary", use_container_width=True):
             run_solver(config)
 
+    result_area = st.container()
+    with result_area:
         result: SearchResult | None = st.session_state.get("result")
         result_config: dict[str, Any] | None = st.session_state.get("result_config")
 
@@ -289,6 +320,37 @@ def compare_solutions(config: dict[str, Any]) -> dict[str, SearchResult]:
     }
 
 
+def problem_history_key(config: dict[str, Any]) -> tuple[Any, ...]:
+    goal: GoalSpec = config["goal"]
+    return (
+        tuple(config["capacities"]),
+        tuple(config["initial_state"]),
+        goal.mode,
+        goal.target,
+        tuple(goal.selected_indices),
+        tuple(goal.exact_state),
+    )
+
+
+def record_algorithm_run(config: dict[str, Any], result: SearchResult) -> dict[str, SearchResult]:
+    key = problem_history_key(config)
+    if st.session_state.get("algorithm_problem_key") != key:
+        st.session_state.algorithm_problem_key = key
+        st.session_state.algorithm_runs = {}
+
+    runs: dict[str, SearchResult] = st.session_state.get("algorithm_runs", {})
+    run_label = f"{ALGORITHM_NAMES[result.algorithm]} · {cost_mode_name(result.cost_mode)}"
+    runs[run_label] = result
+    st.session_state.algorithm_runs = runs
+    return runs
+
+
+def cost_mode_name(cost_mode: str) -> str:
+    if cost_mode == "operations":
+        return "operações"
+    return "volume"
+
+
 def render_problem_panel(config: dict[str, Any], validation_messages: list[tuple[str, str]]) -> None:
     capacities = tuple(config["capacities"])
     initial = tuple(config["initial_state"])
@@ -329,6 +391,33 @@ def render_problem_panel(config: dict[str, Any], validation_messages: list[tuple
             st.info(message)
 
 
+def render_educational_mode() -> None:
+    cards = list(EDUCATIONAL_NOTES.items())
+    current_index = st.session_state.get("education_card_index", 0) % len(cards)
+    selected_name, selected_note = cards[current_index]
+
+    st.markdown("#### Modo educativo")
+    st.markdown(
+        f"""
+        <div class="education-panel">
+            <strong>{escape(selected_name)}</strong>
+            <p>{escape(selected_note)}</p>
+            <small>{current_index + 1} de {len(cards)}</small>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    control_columns = st.columns([1, 1])
+    with control_columns[0]:
+        if st.button("Anterior", use_container_width=True):
+            st.session_state.education_card_index = (current_index - 1) % len(cards)
+            st.rerun()
+    with control_columns[1]:
+        if st.button("A seguir", use_container_width=True):
+            st.session_state.education_card_index = (current_index + 1) % len(cards)
+            st.rerun()
+
+
 def run_solver(config: dict[str, Any]) -> None:
     reachability = cached_reachability(
         tuple(config["capacities"]),
@@ -363,6 +452,7 @@ def run_solver(config: dict[str, Any]) -> None:
         st.session_state.current_step = 0
         st.session_state.comparison = {}
         st.session_state.search_tree = tree
+        st.session_state.algorithm_report = {}
         return
 
     try:
@@ -383,6 +473,7 @@ def run_solver(config: dict[str, Any]) -> None:
     st.session_state.current_step = len(result.actions) if result.success else 0
     st.session_state.comparison = compare_solutions(config) if result.success else {}
     st.session_state.search_tree = tree
+    st.session_state.algorithm_report = record_algorithm_run(config, result) if result.success else {}
 
 
 def render_compact_result(result: SearchResult) -> None:
@@ -454,6 +545,7 @@ def render_result(result: SearchResult, *, include_summary: bool = True) -> None
         render_jug_stage(state, capacities_from_result(result), action=action, before_state=before_state)
 
         render_comparison(st.session_state.get("comparison", {}))
+        render_algorithm_report(st.session_state.get("algorithm_report", {}))
         render_search_tree(st.session_state.get("search_tree"), result)
 
         rows = build_sequence_rows(result)
@@ -542,6 +634,49 @@ def render_comparison_card(label: str, result: SearchResult) -> str:
     )
 
 
+def render_algorithm_report(runs: dict[str, SearchResult]) -> None:
+    st.markdown("#### Relatório dos algoritmos")
+    if len(runs) < 2:
+        st.info(
+            "Resolva este mesmo problema com outro algoritmo para gerar o relatório comparativo. "
+            "Se alterar capacidades, objectivo ou estado inicial, o relatório recomeça."
+        )
+        return
+
+    successful_runs = {label: result for label, result in runs.items() if result.success}
+    if len(successful_runs) < 2:
+        st.warning("Ainda não há duas soluções bem-sucedidas para comparar.")
+        return
+
+    fastest_steps_label, fastest_steps = min(successful_runs.items(), key=lambda item: len(item[1].actions))
+    lowest_volume_label, lowest_volume = min(successful_runs.items(), key=lambda item: item[1].total_volume_moved)
+    lowest_nodes_label, lowest_nodes = min(successful_runs.items(), key=lambda item: item[1].nodes_explored)
+    fastest_time_label, fastest_time = min(successful_runs.items(), key=lambda item: item[1].elapsed_ms)
+
+    report_text = (
+        f"Para este mesmo problema, {fastest_steps_label} apresentou a menor sequência "
+        f"({len(fastest_steps.actions)} passos). "
+        f"{lowest_volume_label} movimentou menos água ({lowest_volume.total_volume_moved}L). "
+        f"{lowest_nodes_label} explorou menos nós ({lowest_nodes.nodes_explored}). "
+        f"{fastest_time_label} teve o menor tempo medido ({fastest_time.elapsed_ms:.2f} ms)."
+    )
+    st.markdown(f'<div class="report-panel">{escape(report_text)}</div>', unsafe_allow_html=True)
+
+    rows = []
+    for label, result in runs.items():
+        rows.append(
+            {
+                "Algoritmo": label,
+                "Passos": len(result.actions) if result.success else "sem solução",
+                "Volume": f"{result.total_volume_moved}L" if result.success else "-",
+                "Nós explorados": f"{result.nodes_explored:,}".replace(",", " "),
+                "Tempo": f"{result.elapsed_ms:.2f} ms",
+                "Resultado": "Solução encontrada" if result.success else result.message,
+            }
+        )
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
 def render_search_tree(tree: SearchTree | None, result: SearchResult) -> None:
     if tree is None:
         return
@@ -602,16 +737,32 @@ def format_state_multiline(state: State) -> str:
 
 def short_action_label(action: Action) -> str:
     if action.kind == "fill" and action.target is not None:
-        return f"Encher J{action.target + 1} (+{action.amount}L)"
+        return f"Encher {action.amount}L na J{action.target + 1}"
     if action.kind == "empty" and action.source is not None:
-        return f"Esvaziar J{action.source + 1} (-{action.amount}L)"
+        return f"Esvaziar J{action.source + 1} despejando {action.amount}L"
     if action.kind == "transfer" and action.source is not None and action.target is not None:
-        return f"J{action.source + 1} -> J{action.target + 1}: {action.amount}L"
+        return f"Transferir {action.amount}L da J{action.source + 1} para J{action.target + 1}"
     return action.label
 
 
 def dot_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+@st.cache_data(show_spinner=False)
+def pitcher_image_data_uri() -> str:
+    if not PITCHER_IMAGE_PATH.exists():
+        return ""
+    encoded = base64.b64encode(PITCHER_IMAGE_PATH.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+@st.cache_data(show_spinner=False)
+def pitcher_mask_data_uri() -> str:
+    if not PITCHER_MASK_PATH.exists():
+        return ""
+    encoded = base64.b64encode(PITCHER_MASK_PATH.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
 
 
 def render_jug_stage(
@@ -622,9 +773,14 @@ def render_jug_stage(
     before_state: State | None = None,
 ) -> None:
     number_of_jugs = len(state)
-    stage_width = max(760, number_of_jugs * 128)
+    stage_width = max(820, number_of_jugs * 170)
     flow = render_flow(action, number_of_jugs)
-    jug_cards = "\n".join(render_jug(index, amount, capacities[index], action, before_state) for index, amount in enumerate(state))
+    pitcher_src = pitcher_image_data_uri()
+    pitcher_mask_src = pitcher_mask_data_uri()
+    jug_cards = "\n".join(
+        render_jug(index, amount, capacities[index], action, before_state, pitcher_src, pitcher_mask_src)
+        for index, amount in enumerate(state)
+    )
     action_label = "Estado inicial" if action is None else action.label
 
     html = f"""
@@ -668,8 +824,8 @@ def render_jug_stage(
         .jugs-grid {{
           position: relative;
           display: grid;
-          grid-template-columns: repeat({number_of_jugs}, minmax(96px, 1fr));
-          gap: 18px;
+          grid-template-columns: repeat({number_of_jugs}, minmax(132px, 1fr));
+          gap: 20px;
           align-items: end;
           z-index: 2;
         }}
@@ -677,7 +833,7 @@ def render_jug_stage(
           position: relative;
           display: grid;
           justify-items: center;
-          min-height: 286px;
+          min-height: 302px;
         }}
         .jug-name {{
           margin-bottom: 8px;
@@ -694,39 +850,45 @@ def render_jug_stage(
           font-size: 13px;
           font-weight: 900;
         }}
-        .jug-body {{
+        .photo-jug {{
           position: relative;
-          width: 86px;
-          height: 204px;
-          border: 5px solid rgba(15, 23, 42, 0.72);
-          border-top: 0;
-          border-radius: 8px 8px 30px 30px;
-          background:
-            linear-gradient(90deg, rgba(255,255,255,0.76), rgba(255,255,255,0.18) 38%, rgba(255,255,255,0.54));
-          overflow: hidden;
-          box-shadow:
-            inset 9px 0 18px rgba(255, 255, 255, 0.48),
-            inset -9px 0 18px rgba(15, 23, 42, 0.10),
-            0 18px 36px rgba(15, 23, 42, 0.16);
+          width: 174px;
+          aspect-ratio: 820 / 800;
+          overflow: visible;
         }}
-        .jug-body:before {{
-          content: "";
+        .photo-jug img {{
           position: absolute;
-          right: -25px;
-          top: 42px;
-          width: 34px;
-          height: 72px;
-          border: 5px solid rgba(15, 23, 42, 0.55);
-          border-left: 0;
-          border-radius: 0 28px 28px 0;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+          z-index: 3;
+          filter: drop-shadow(0 18px 24px rgba(15, 23, 42, 0.16));
+          pointer-events: none;
         }}
-        .jug-neck {{
-          width: 52px;
-          height: 17px;
-          border: 5px solid rgba(15, 23, 42, 0.72);
-          border-bottom: 0;
-          border-radius: 10px 10px 0 0;
-          background: rgba(255, 255, 255, 0.72);
+        .pitcher-water-window,
+        .pitcher-glass-glow {{
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          -webkit-mask-image: var(--pitcher-mask);
+          mask-image: var(--pitcher-mask);
+          -webkit-mask-size: 100% 100%;
+          mask-size: 100% 100%;
+          -webkit-mask-repeat: no-repeat;
+          mask-repeat: no-repeat;
+          -webkit-mask-position: center;
+          mask-position: center;
+        }}
+        .pitcher-water-window {{
+          overflow: hidden;
+          z-index: 1;
+        }}
+        .pitcher-glass-glow {{
+          z-index: 2;
+          background: linear-gradient(90deg, rgba(255,255,255,0.35), rgba(255,255,255,0.04) 38%, rgba(255,255,255,0.28));
+          pointer-events: none;
         }}
         .water {{
           position: absolute;
@@ -860,7 +1022,15 @@ def render_jug_stage(
     components.html(html, height=435, scrolling=False)
 
 
-def render_jug(index: int, amount: int, capacity: int, action: Action | None, before_state: State | None) -> str:
+def render_jug(
+    index: int,
+    amount: int,
+    capacity: int,
+    action: Action | None,
+    before_state: State | None,
+    pitcher_src: str,
+    pitcher_mask_src: str,
+) -> str:
     percent = 0 if capacity == 0 else max(0, min(100, amount / capacity * 100))
     water_min = "5px" if amount > 0 else "0px"
     delta = ""
@@ -874,11 +1044,14 @@ def render_jug(index: int, amount: int, capacity: int, action: Action | None, be
     return f"""
       <div class="jug-card">
         <div class="jug-name">J{index + 1}</div>
-        <div class="jug-neck"></div>
-        <div class="jug-body">
-          <div class="water" style="--water-height: {percent:.2f}%; --water-min: {water_min};">
-            <div class="bubbles"></div>
+        <div class="photo-jug" style="--pitcher-mask: url('{pitcher_mask_src}');">
+          <div class="pitcher-water-window">
+            <div class="water" style="--water-height: {percent:.2f}%; --water-min: {water_min};">
+              <div class="bubbles"></div>
+            </div>
           </div>
+          <div class="pitcher-glass-glow"></div>
+          <img src="{pitcher_src}" alt="Jarro J{index + 1}" />
         </div>
         <div class="jug-value">{amount} / {capacity} L</div>
         <div class="jug-delta">{escape(delta)}</div>
@@ -1035,22 +1208,32 @@ def inject_theme() -> None:
         """
         <style>
           :root {
-            --text: #172033;
-            --muted: #5f6c80;
-            --panel: rgba(255, 255, 255, 0.88);
-            --line: rgba(23, 32, 51, 0.10);
-            --teal: #0f9f9a;
-            --coral: #f97316;
+            --text: #11203a;
+            --muted: #52627a;
+            --panel: rgba(255, 255, 255, 0.84);
+            --line: rgba(38, 67, 114, 0.12);
+            --teal: #006f8f;
+            --blue: #1d9bd7;
+            --lilac: #8b7cf6;
+            --soft-shadow: 0 18px 44px rgba(58, 94, 152, 0.13);
+          }
+          html, body, .stApp, [class*="css"] {
+            font-family: SoDoSans, "Helvetica Neue", Arial, sans-serif;
           }
           .stApp {
             color: var(--text);
             background:
-              linear-gradient(180deg, rgba(248,251,255,0.96), rgba(238,248,246,0.96) 48%, rgba(255,250,244,0.96)),
-              url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='900' height='420' viewBox='0 0 900 420'%3E%3Cg fill='none' stroke='%230f9f9a' stroke-opacity='.08' stroke-width='2'%3E%3Cpath d='M0 74 C140 22 220 126 360 74 S600 22 900 74'/%3E%3Cpath d='M0 238 C140 186 220 290 360 238 S600 186 900 238'/%3E%3C/g%3E%3Cg fill='none' stroke='%23f97316' stroke-opacity='.07' stroke-width='2'%3E%3Cpath d='M0 156 C120 116 210 190 330 156 S560 116 900 156'/%3E%3C/g%3E%3C/svg%3E");
-            background-size: auto, 900px 420px;
+              radial-gradient(circle at 82% 8%, rgba(139, 124, 246, 0.26), transparent 30%),
+              radial-gradient(circle at 18% 24%, rgba(91, 201, 255, 0.22), transparent 26%),
+              linear-gradient(135deg, #ffffff 0%, #f7fbff 28%, #e8f6ff 62%, #f0ecff 100%);
+            background-attachment: fixed;
           }
           [data-testid="stSidebar"] {
-            background: rgba(255, 255, 255, 0.86);
+            background:
+              radial-gradient(circle at 80% 8%, rgba(139, 124, 246, 0.20), transparent 32%),
+              radial-gradient(circle at 12% 30%, rgba(91, 201, 255, 0.18), transparent 28%),
+              linear-gradient(135deg, rgba(255,255,255,0.96), rgba(235,247,255,0.88) 58%, rgba(243,240,255,0.90));
+            backdrop-filter: blur(18px);
             border-right: 1px solid var(--line);
           }
           [data-testid="stSidebar"] h1,
@@ -1062,6 +1245,10 @@ def inject_theme() -> None:
           }
           [data-testid="stSidebar"] * {
             letter-spacing: 0;
+          }
+          [data-testid="stSidebar"] section,
+          [data-testid="stSidebar"] div[data-testid="stExpander"] {
+            border-color: rgba(38, 67, 114, 0.12);
           }
           .block-container {
             padding-top: 1.4rem;
@@ -1079,18 +1266,10 @@ def inject_theme() -> None:
             border: 1px solid var(--line);
             border-radius: 22px;
             background:
-              linear-gradient(135deg, rgba(255,255,255,0.93), rgba(240,253,250,0.80)),
+              linear-gradient(135deg, rgba(255,255,255,0.94), rgba(232,246,255,0.86) 58%, rgba(240,236,255,0.82)),
               url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='260' viewBox='0 0 800 260'%3E%3Cg fill='none' stroke='%230f9f9a' stroke-opacity='.18' stroke-width='2'%3E%3Cpath d='M-20 184 C120 110 190 230 330 156 S560 80 840 156'/%3E%3Cpath d='M-20 216 C130 132 214 252 360 182 S610 112 840 188'/%3E%3C/g%3E%3C/svg%3E");
             background-size: cover;
-            box-shadow: 0 22px 54px rgba(15, 23, 42, 0.10);
-          }
-          .eyebrow {
-            margin: 0 0 8px;
-            color: var(--teal);
-            font-size: 13px;
-            font-weight: 900;
-            text-transform: uppercase;
-            letter-spacing: 0;
+            box-shadow: var(--soft-shadow);
           }
           .app-hero h1 {
             margin: 0;
@@ -1099,41 +1278,41 @@ def inject_theme() -> None:
             line-height: 0.98;
             letter-spacing: 0;
           }
-          .hero-copy {
-            max-width: 680px;
-            margin: 14px 0 0;
-            color: var(--muted);
-            font-size: 1.05rem;
-          }
           .hero-visual {
-            min-width: 230px;
-            height: 142px;
+            min-width: 260px;
+            height: 154px;
             position: relative;
           }
-          .hero-jug {
+          .hero-photo-jug {
             position: absolute;
-            bottom: 10px;
-            width: 74px;
-            height: 104px;
-            border: 5px solid rgba(15, 23, 42, 0.72);
-            border-top: 0;
-            border-radius: 8px 8px 25px 25px;
+            bottom: 0;
+            width: 136px;
+            aspect-ratio: 820 / 800;
+          }
+          .hero-photo-jug img {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            z-index: 3;
+            filter: drop-shadow(0 16px 22px rgba(15, 23, 42, 0.16));
+          }
+          .hero-water-window {
+            position: absolute;
+            inset: 0;
             overflow: hidden;
-            background: rgba(255,255,255,0.72);
-            box-shadow: inset 8px 0 18px rgba(255,255,255,.58), 0 16px 28px rgba(15,23,42,.13);
+            z-index: 1;
+            -webkit-mask-image: var(--pitcher-mask);
+            mask-image: var(--pitcher-mask);
+            -webkit-mask-size: 100% 100%;
+            mask-size: 100% 100%;
+            -webkit-mask-repeat: no-repeat;
+            mask-repeat: no-repeat;
+            -webkit-mask-position: center;
+            mask-position: center;
           }
-          .hero-jug:before {
-            content: "";
-            position: absolute;
-            top: 25px;
-            right: -24px;
-            width: 28px;
-            height: 42px;
-            border: 5px solid rgba(15, 23, 42, 0.50);
-            border-left: 0;
-            border-radius: 0 22px 22px 0;
-          }
-          .hero-jug span {
+          .hero-water-window span {
             position: absolute;
             left: 0;
             right: 0;
@@ -1141,35 +1320,35 @@ def inject_theme() -> None:
             background: linear-gradient(180deg, #7df9ff, #0ea5e9 54%, #0f9f9a);
             box-shadow: inset 0 10px 18px rgba(255,255,255,.48);
           }
-          .hero-jug span:before {
+          .hero-water-window span:before {
             content: "";
             position: absolute;
             top: -8px;
-            left: -16px;
-            width: 110px;
+            left: -18%;
+            width: 136%;
             height: 16px;
-            border-radius: 50%;
+            border-radius: 45%;
             background: rgba(240,253,250,.78);
             animation: heroWave 2.6s ease-in-out infinite;
           }
-          .hero-jug-a {
-            left: 10px;
+          .hero-photo-jug-a {
+            left: 0;
             transform: rotate(-9deg);
           }
-          .hero-jug-a span {
+          .hero-photo-jug-a .hero-water-window span {
             height: 74%;
           }
-          .hero-jug-b {
-            right: 8px;
+          .hero-photo-jug-b {
+            right: 0;
           }
-          .hero-jug-b span {
+          .hero-photo-jug-b .hero-water-window span {
             height: 42%;
           }
           .hero-stream {
             position: absolute;
-            left: 88px;
-            top: 50px;
-            width: 82px;
+            left: 102px;
+            top: 58px;
+            width: 88px;
             height: 10px;
             border-radius: 999px;
             transform: rotate(14deg);
@@ -1188,8 +1367,8 @@ def inject_theme() -> None:
             padding: 18px 18px 16px;
             border: 1px solid var(--line);
             border-radius: 16px;
-            background: rgba(255, 255, 255, 0.78);
-            box-shadow: 0 14px 32px rgba(15, 23, 42, 0.08);
+            background: rgba(255, 255, 255, 0.82);
+            box-shadow: var(--soft-shadow);
           }
           div[data-testid="stMetricLabel"] p {
             color: var(--muted);
@@ -1204,8 +1383,8 @@ def inject_theme() -> None:
             padding: 16px;
             border: 1px solid var(--line);
             border-radius: 16px;
-            background: rgba(255,255,255,0.74);
-            box-shadow: 0 14px 32px rgba(15, 23, 42, 0.07);
+            background: rgba(255,255,255,0.78);
+            box-shadow: var(--soft-shadow);
           }
           .summary-row {
             display: grid;
@@ -1214,7 +1393,7 @@ def inject_theme() -> None:
             align-items: center;
             padding: 10px 12px;
             border-radius: 10px;
-            background: rgba(248, 250, 252, 0.86);
+            background: rgba(250, 253, 255, 0.9);
           }
           .summary-row span {
             color: var(--muted);
@@ -1239,8 +1418,8 @@ def inject_theme() -> None:
             padding: 18px 20px;
             border: 1px solid var(--line);
             border-radius: 16px;
-            background: rgba(255, 255, 255, 0.82);
-            box-shadow: 0 14px 32px rgba(15, 23, 42, 0.08);
+            background: rgba(255, 255, 255, 0.84);
+            box-shadow: var(--soft-shadow);
           }
           .compact-card span {
             color: var(--muted);
@@ -1268,8 +1447,8 @@ def inject_theme() -> None:
             padding: 18px 20px;
             border: 1px solid var(--line);
             border-radius: 16px;
-            background: linear-gradient(180deg, rgba(255,255,255,0.88), rgba(240,253,250,0.66));
-            box-shadow: 0 14px 32px rgba(15, 23, 42, 0.08);
+            background: linear-gradient(180deg, rgba(255,255,255,0.90), rgba(232,246,255,0.72));
+            box-shadow: var(--soft-shadow);
           }
           .compare-card span {
             color: var(--teal);
@@ -1293,22 +1472,68 @@ def inject_theme() -> None:
             color: var(--muted);
             font-weight: 800;
           }
+          .education-panel,
+          .report-panel {
+            margin: 12px 0 18px;
+            padding: 16px 18px;
+            border: 1px solid rgba(29, 155, 215, 0.18);
+            border-radius: 16px;
+            background: linear-gradient(135deg, rgba(255,255,255,0.86), rgba(239,247,255,0.78) 62%, rgba(244,241,255,0.80));
+            box-shadow: var(--soft-shadow);
+            color: #11203a;
+          }
+          .education-panel strong {
+            display: block;
+            color: #005f7c;
+            font-size: 1rem;
+            margin-bottom: 6px;
+          }
+          .education-panel p {
+            margin: 0;
+            color: #33445f;
+            line-height: 1.45;
+            font-weight: 700;
+          }
+          .education-panel small {
+            display: inline-block;
+            margin-top: 12px;
+            color: #5b6b83;
+            font-weight: 900;
+          }
+          .report-panel {
+            font-weight: 800;
+            line-height: 1.55;
+          }
           .stButton > button,
           .stDownloadButton > button {
-            border-radius: 12px;
+            border-radius: 999px;
             font-weight: 900;
             letter-spacing: 0;
+            min-height: 42px;
+            border: 1px solid rgba(29, 155, 215, 0.22);
+            background: rgba(255, 255, 255, 0.86);
+            color: #11314d;
+            box-shadow: 0 10px 24px rgba(58, 94, 152, 0.12);
+            transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+          }
+          .stButton > button:hover,
+          .stDownloadButton > button:hover {
+            transform: translateY(-1px);
+            color: #073b5c;
+            border-color: rgba(29, 155, 215, 0.34);
+            background: rgba(255, 255, 255, 0.96);
+            box-shadow: 0 14px 30px rgba(58, 94, 152, 0.18);
           }
           button[data-testid="stBaseButton-primary"] {
             color: #ffffff;
             border: 0;
-            background: linear-gradient(135deg, #0f9f9a, #0ea5e9);
-            box-shadow: 0 12px 24px rgba(14, 116, 144, 0.20);
+            background: linear-gradient(135deg, #0076a8 0%, #1d9bd7 58%, #8b7cf6 100%);
+            box-shadow: 0 16px 30px rgba(29, 155, 215, 0.28);
           }
           button[data-testid="stBaseButton-primary"]:hover {
             color: #ffffff;
             border: 0;
-            background: linear-gradient(135deg, #0d9488, #0284c7);
+            background: linear-gradient(135deg, #005f8a 0%, #128bd0 58%, #7a68f1 100%);
           }
           .stDataFrame {
             border-radius: 14px;
