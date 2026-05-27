@@ -124,7 +124,7 @@ def generate_successors(state: State, capacities: State) -> Iterable[tuple[State
                     source=None,
                     target=index,
                     amount=moved,
-                    label=f"Encher J{index + 1} com {moved} L",
+                    label=f"Encher {moved}L na J{index + 1}",
                 ),
             )
 
@@ -139,7 +139,7 @@ def generate_successors(state: State, capacities: State) -> Iterable[tuple[State
                     source=index,
                     target=None,
                     amount=moved,
-                    label=f"Esvaziar J{index + 1} retirando {moved} L",
+                    label=f"Esvaziar J{index + 1} despejando {moved}L",
                 ),
             )
 
@@ -165,7 +165,7 @@ def generate_successors(state: State, capacities: State) -> Iterable[tuple[State
                     source=source,
                     target=target,
                     amount=moved,
-                    label=f"Transferir {moved} L de J{source + 1} para J{target + 1}",
+                    label=f"Transferir {moved}L da J{source + 1} para J{target + 1}",
                 ),
             )
 
