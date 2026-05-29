@@ -17,6 +17,7 @@ GoalMode = Literal["any_jug", "selected_sum", "any_combination", "exact_state"]
 
 @dataclass(frozen=True)
 class GoalSpec:
+    # Esta classe guarda o tipo de objectivo que queremos atingir.
     mode: GoalMode
     target: int = 0
     selected_indices: tuple[int, ...] = ()
@@ -25,6 +26,7 @@ class GoalSpec:
 
 @dataclass(frozen=True)
 class Action:
+    # Esta classe representa uma operação feita numa jarra.
     kind: Literal["fill", "empty", "transfer"]
     source: int | None
     target: int | None
@@ -34,6 +36,7 @@ class Action:
 
 @dataclass(frozen=True)
 class SearchResult:
+    # Aqui guardo tudo que a busca devolve para a interface mostrar.
     success: bool
     states: list[State]
     actions: list[Action]
@@ -108,6 +111,8 @@ def is_goal(state: State, goal: GoalSpec) -> bool:
 
 
 def generate_successors(state: State, capacities: State) -> Iterable[tuple[State, Action]]:
+    # A partir de um estado, gero todas as acções possíveis:
+    # encher, esvaziar e transferir água entre jarras.
     number_of_jugs = len(state)
 
     for index, current in enumerate(state):
@@ -179,6 +184,8 @@ def solve_water_jugs(
     cost_mode: CostMode = "operations",
     max_nodes: int = 50_000,
 ) -> SearchResult:
+    # Esta é a função principal da lógica.
+    # Ela escolhe o algoritmo e tenta encontrar uma solução.
     capacities_state = tuple(int(value) for value in capacities)
     initial = tuple(int(value) for value in (initial_state or [0] * len(capacities_state)))
     started = time.perf_counter()
@@ -226,6 +233,7 @@ def analyse_reachability(
     initial_state: Iterable[int] | None = None,
     max_nodes: int = 200_000,
 ) -> ReachabilityAnalysis:
+    # Esta função tenta descobrir se o objectivo é possível antes de mostrar a solução.
     capacities_state = tuple(int(value) for value in capacities)
     initial = tuple(int(value) for value in (initial_state or [0] * len(capacities_state)))
     started = time.perf_counter()
@@ -295,6 +303,7 @@ def build_search_tree(
     max_nodes: int = 60,
     max_depth: int = 4,
 ) -> SearchTree:
+    # Esta função cria uma árvore pequena da busca para mostrar no grafo.
     capacities_state = tuple(int(value) for value in capacities)
     initial = tuple(int(value) for value in (initial_state or [0] * len(capacities_state)))
     _validate_problem(capacities_state, initial, goal, "bfs", "operations", max_nodes)
