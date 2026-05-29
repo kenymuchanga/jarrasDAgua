@@ -26,34 +26,44 @@ from water_jug_solver import (
 ALGORITHMS = {
     "BFS - menor número de passos": "bfs",
     "DFS - exploração em profundidade": "dfs",
-    "Custo uniforme - menor custo acumulado": "ucs",
+    "IDS - profundidade iterativa": "ids",
+    "Custo uniforme - menor volume movimentado": "ucs",
     "A* - busca informada": "astar",
+    "Busca gulosa - heurística rápida": "greedy",
 }
 
 ALGORITHM_NAMES = {
     "bfs": "BFS",
     "dfs": "DFS",
+    "ids": "IDS",
     "ucs": "Custo uniforme",
     "astar": "A*",
+    "greedy": "Busca gulosa",
 }
 
 EDUCATIONAL_NOTES = {
     "BFS": "Explora por camadas. É bom para encontrar a solução com menos operações quando cada acção tem o mesmo peso.",
     "DFS": "Segue um ramo até ao fundo antes de voltar. Pode encontrar soluções rapidamente, mas não garante a menor sequência.",
-    "Custo uniforme": "Expande primeiro o estado com menor custo acumulado. É indicado quando queremos minimizar volume movimentado.",
+    "IDS": "Faz DFS várias vezes com limites de profundidade crescentes. Tenta manter baixo o uso de memória e ainda procurar por níveis.",
+    "Custo uniforme": "Expande primeiro o estado com menor custo acumulado. Aqui é usado para procurar a solução com menor volume movimentado.",
     "A*": "Usa custo acumulado e uma estimativa do que falta. Procura reduzir exploração mantendo uma direcção inteligente.",
+    "Busca gulosa": "Escolhe primeiro o estado que parece mais perto do objectivo. Costuma ser rápida, mas não garante a melhor solução.",
 }
 
-COST_MODES = {
-    "Número de operações": "operations",
-    "Volume total movimentado": "volume",
+ALGORITHM_COST_MODES = {
+    "bfs": "operations",
+    "dfs": "operations",
+    "ids": "operations",
+    "ucs": "volume",
+    "astar": "volume",
+    "greedy": "volume",
 }
 
 GOAL_MODES = {
-    "Quantidade em qualquer jarro": "any_jug",
-    "Soma dos jarros seleccionados": "selected_sum",
-    "Qualquer combinação de jarros": "any_combination",
-    "Estado exacto de todos os jarros": "exact_state",
+    "Quantidade em qualquer jarra": "any_jug",
+    "Soma das jarras seleccionadas": "selected_sum",
+    "Qualquer combinação de jarras": "any_combination",
+    "Estado exacto de todas as jarras": "exact_state",
 }
 
 APP_DIR = Path(__file__).resolve().parent
@@ -63,7 +73,7 @@ PITCHER_MASK_PATH = APP_DIR / "assets" / "jug_pitcher_fill_mask.png"
 
 def main() -> None:
     st.set_page_config(
-        page_title="Jarros de Água",
+        page_title="Jarras D'Agua",
         page_icon="💧",
         layout="wide",
         initial_sidebar_state="expanded",
@@ -76,14 +86,17 @@ def main() -> None:
         f"""
         <section class="app-hero">
             <div>
-                <h1>Jarros de Água</h1>
+                <h1>Jarras D'Agua</h1>
             </div>
             <div class="hero-visual" aria-hidden="true">
                 <div class="hero-photo-jug hero-photo-jug-a" style="--pitcher-mask: url('{hero_mask_src}');">
                     <div class="hero-water-window"><span></span></div>
                     <img src="{hero_pitcher_src}" alt="" />
                 </div>
-                <div class="hero-stream"></div>
+                <div class="hero-exchange">
+                    <div class="hero-stream hero-stream-out"></div>
+                    <div class="hero-stream hero-stream-in"></div>
+                </div>
                 <div class="hero-photo-jug hero-photo-jug-b" style="--pitcher-mask: url('{hero_mask_src}');">
                     <div class="hero-water-window"><span></span></div>
                     <img src="{hero_pitcher_src}" alt="" />
@@ -135,7 +148,7 @@ def render_sidebar() -> dict[str, Any]:
     with st.sidebar:
         st.header("Configuração")
 
-        number_of_jugs = st.slider("Número de jarros", min_value=2, max_value=7, value=3, step=1)
+        number_of_jugs = st.slider("Número de jarras", min_value=2, max_value=7, value=3, step=1)
 
         default_capacities = [8, 5, 3, 11, 7, 13, 9]
         capacities: list[int] = []
@@ -145,7 +158,7 @@ def render_sidebar() -> dict[str, Any]:
                 capacities.append(
                     int(
                         st.number_input(
-                            f"Capacidade J{index + 1} (L)",
+                            f"Capacidade J{index + 1}",
                             min_value=1,
                             max_value=100,
                             value=default_capacities[index],
@@ -171,7 +184,7 @@ def render_sidebar() -> dict[str, Any]:
                     target_values.append(
                         int(
                             st.number_input(
-                                f"Objectivo J{index + 1} (L)",
+                                f"Objectivo J{index + 1}",
                                 min_value=0,
                                 max_value=capacities[index],
                                 value=min(0 if index else 4, capacities[index]),
@@ -186,7 +199,7 @@ def render_sidebar() -> dict[str, Any]:
             max_target = sum(capacities) if goal_mode != "any_jug" else max(capacities)
             target = int(
                 st.number_input(
-                    "Quantidade objectivo (L)",
+                    "Quantidade objectivo",
                     min_value=0,
                     max_value=max_target,
                     value=min(4, max_target),
@@ -196,7 +209,7 @@ def render_sidebar() -> dict[str, Any]:
 
         if goal_mode == "selected_sum":
             selected = st.multiselect(
-                "Jarros da combinação",
+                "Jarras da combinação",
                 options=list(range(number_of_jugs)),
                 default=list(range(min(2, number_of_jugs))),
                 format_func=lambda index: f"J{index + 1}",
@@ -204,15 +217,11 @@ def render_sidebar() -> dict[str, Any]:
             selected_indices = tuple(sorted(selected))
 
         algorithm_label = st.selectbox("Algoritmo de busca", list(ALGORITHMS.keys()), index=0)
-        cost_label = st.selectbox(
-            "Custo a optimizar",
-            list(COST_MODES.keys()),
-            index=0,
-            help="BFS privilegia passos; custo uniforme e A* usam este custo na fronteira.",
-        )
+        algorithm = ALGORITHMS[algorithm_label]
+        cost_mode = ALGORITHM_COST_MODES[algorithm]
 
         with st.expander("Estado inicial e limites"):
-            custom_initial = st.toggle("Começar com água nos jarros", value=False)
+            custom_initial = st.toggle("Começar com água nas jarras", value=False)
             initial_state: list[int] = []
             initial_columns = st.columns(2)
             for index in range(number_of_jugs):
@@ -220,7 +229,7 @@ def render_sidebar() -> dict[str, Any]:
                 with initial_columns[index % 2]:
                     initial_value = int(
                         st.number_input(
-                            f"Inicial J{index + 1} (L)",
+                            f"Inicial J{index + 1}",
                             min_value=0,
                             max_value=capacities[index],
                             value=default_value,
@@ -257,11 +266,10 @@ def render_sidebar() -> dict[str, Any]:
         "capacities": capacities,
         "initial_state": initial_state,
         "goal": goal,
-        "algorithm": ALGORITHMS[algorithm_label],
-        "cost_mode": COST_MODES[cost_label],
+        "algorithm": algorithm,
+        "cost_mode": cost_mode,
         "goal_label": goal_label,
         "algorithm_label": algorithm_label,
-        "cost_label": cost_label,
         "max_nodes": max_nodes,
         "tree_max_nodes": tree_max_nodes,
         "tree_max_depth": tree_max_depth,
@@ -339,16 +347,10 @@ def record_algorithm_run(config: dict[str, Any], result: SearchResult) -> dict[s
         st.session_state.algorithm_runs = {}
 
     runs: dict[str, SearchResult] = st.session_state.get("algorithm_runs", {})
-    run_label = f"{ALGORITHM_NAMES[result.algorithm]} · {cost_mode_name(result.cost_mode)}"
+    run_label = ALGORITHM_NAMES[result.algorithm]
     runs[run_label] = result
     st.session_state.algorithm_runs = runs
     return runs
-
-
-def cost_mode_name(cost_mode: str) -> str:
-    if cost_mode == "operations":
-        return "operações"
-    return "volume"
 
 
 def render_problem_panel(config: dict[str, Any], validation_messages: list[tuple[str, str]]) -> None:
@@ -430,6 +432,8 @@ def run_solver(config: dict[str, Any]) -> None:
         config["capacities"],
         config["goal"],
         initial_state=config["initial_state"],
+        algorithm=config["algorithm"],
+        cost_mode=config["cost_mode"],
         max_nodes=config["tree_max_nodes"],
         max_depth=config["tree_max_depth"],
     )
@@ -556,7 +560,7 @@ def render_result(result: SearchResult, *, include_summary: bool = True) -> None
         st.download_button(
             "Exportar sequência CSV",
             data=csv,
-            file_name="sequencia_jarros.csv",
+            file_name="sequencia_jarras.csv",
             mime="text/csv",
             use_container_width=True,
         )
@@ -594,7 +598,7 @@ def render_comparison(comparison: dict[str, SearchResult]) -> None:
         rows.append(
             {
                 "Critério": label,
-                "Algoritmo": "BFS" if result.algorithm == "bfs" else "Custo uniforme",
+                "Algoritmo": ALGORITHM_NAMES.get(result.algorithm, result.algorithm),
                 "Passos": len(result.actions) if result.success else "sem solução",
                 "Volume": f"{result.total_volume_moved} L" if result.success else "-",
                 "Nós explorados": f"{result.nodes_explored:,}".replace(",", " "),
@@ -836,18 +840,18 @@ def render_jug_stage(
           min-height: 302px;
         }}
         .jug-name {{
-          margin-bottom: 8px;
+          margin-bottom: 4px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          width: 46px;
-          height: 30px;
+          width: 24px;
+          height: 16px;
           border-radius: 999px;
-          color: #0f172a;
-          background: #ffffff;
-          border: 1px solid rgba(15, 23, 42, 0.10);
-          box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
-          font-size: 13px;
+          color: #07506d;
+          background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(232,247,255,0.86));
+          border: 1px solid rgba(14, 116, 144, 0.13);
+          box-shadow: 0 4px 9px rgba(15, 23, 42, 0.07);
+          font-size: 8px;
           font-weight: 900;
         }}
         .photo-jug {{
@@ -952,11 +956,27 @@ def render_jug_stage(
           top: 98px;
           left: var(--flow-left);
           width: var(--flow-width);
-          height: 10px;
+          height: 4px;
           border-radius: 999px;
-          background: repeating-linear-gradient(90deg, rgba(14,165,233,0), rgba(14,165,233,0) 0 8px, rgba(14,165,233,0.92) 8px 25px, rgba(103,232,249,0.92) 25px 38px);
-          filter: drop-shadow(0 6px 8px rgba(14, 116, 144, 0.22));
+          background:
+            linear-gradient(90deg, rgba(255,255,255,0.62), rgba(125,249,255,0.22) 24%, rgba(255,255,255,0.54) 52%, rgba(14,165,233,0.18)),
+            repeating-linear-gradient(90deg, rgba(14,165,233,0), rgba(14,165,233,0) 0 7px, rgba(14,165,233,0.92) 7px 21px, rgba(103,232,249,0.92) 21px 31px);
+          box-shadow: 0 0 0 1px rgba(125,249,255,0.16), 0 0 16px rgba(14,165,233,0.22);
+          filter: drop-shadow(0 3px 5px rgba(14, 116, 144, 0.16));
           animation: stream 850ms linear infinite;
+        }}
+        .transfer-flow:before {{
+          content: "";
+          position: absolute;
+          left: 4px;
+          right: 4px;
+          top: 50%;
+          height: 18px;
+          transform: translateY(-50%);
+          border-radius: 999px;
+          background: linear-gradient(90deg, transparent, rgba(125,249,255,0.22), transparent);
+          filter: blur(5px);
+          opacity: 0.76;
         }}
         .transfer-flow.reverse {{
           animation-direction: reverse;
@@ -964,38 +984,59 @@ def render_jug_stage(
         .transfer-flow:after {{
           content: "";
           position: absolute;
-          top: -6px;
+          top: 50%;
           width: 0;
           height: 0;
-          border-top: 11px solid transparent;
-          border-bottom: 11px solid transparent;
+          transform: translateY(-50%);
+          border-top: 5px solid transparent;
+          border-bottom: 5px solid transparent;
+          filter: drop-shadow(0 0 8px rgba(14,165,233,0.34));
         }}
         .transfer-flow.forward:after {{
-          right: -13px;
-          border-left: 17px solid rgba(14, 165, 233, 0.95);
+          right: -7px;
+          border-left: 8px solid rgba(14, 165, 233, 0.95);
         }}
         .transfer-flow.reverse:after {{
-          left: -13px;
-          border-right: 17px solid rgba(14, 165, 233, 0.95);
+          left: -7px;
+          border-right: 8px solid rgba(14, 165, 233, 0.95);
         }}
         .vertical-flow {{
           position: absolute;
           left: var(--flow-left);
           transform: translateX(-50%);
-          width: 13px;
+          width: 5px;
           border-radius: 999px;
-          background: repeating-linear-gradient(180deg, rgba(14,165,233,0), rgba(14,165,233,0) 0 6px, rgba(14,165,233,0.92) 6px 22px, rgba(125,249,255,0.9) 22px 34px);
-          filter: drop-shadow(0 6px 8px rgba(14, 116, 144, 0.18));
+          background:
+            linear-gradient(180deg, rgba(255,255,255,0.50), rgba(255,255,255,0.10) 45%, rgba(255,255,255,0.42)),
+            repeating-linear-gradient(180deg, rgba(14,165,233,0), rgba(14,165,233,0) 0 5px, rgba(14,165,233,0.92) 5px 18px, rgba(125,249,255,0.9) 18px 27px);
+          box-shadow: 0 0 0 1px rgba(125,249,255,0.14), 0 0 14px rgba(14,165,233,0.20);
+          filter: drop-shadow(0 3px 5px rgba(14, 116, 144, 0.15));
           animation: verticalStream 800ms linear infinite;
+        }}
+        .vertical-flow:before {{
+          content: "";
+          position: absolute;
+          left: 50%;
+          top: 6px;
+          bottom: 6px;
+          width: 16px;
+          transform: translateX(-50%);
+          border-radius: 999px;
+          background: linear-gradient(180deg, transparent, rgba(125,249,255,0.20), transparent);
+          filter: blur(5px);
+          opacity: 0.78;
         }}
         .fill-flow {{
           top: 70px;
-          height: 94px;
+          height: 88px;
         }}
         .empty-flow {{
           top: 262px;
-          height: 92px;
-          background: repeating-linear-gradient(180deg, rgba(251,146,60,0), rgba(251,146,60,0) 0 6px, rgba(251,146,60,0.94) 6px 22px, rgba(253,186,116,0.9) 22px 34px);
+          height: 86px;
+          background:
+            linear-gradient(180deg, rgba(255,255,255,0.34), rgba(255,255,255,0.06) 46%, rgba(255,255,255,0.26)),
+            repeating-linear-gradient(180deg, rgba(251,146,60,0), rgba(251,146,60,0) 0 5px, rgba(251,146,60,0.94) 5px 18px, rgba(253,186,116,0.9) 18px 27px);
+          box-shadow: 0 0 0 1px rgba(253,186,116,0.12), 0 0 14px rgba(251,146,60,0.18);
         }}
         @keyframes wave {{
           0%, 100% {{ transform: translateX(0) scaleY(1); }}
@@ -1051,7 +1092,7 @@ def render_jug(
             </div>
           </div>
           <div class="pitcher-glass-glow"></div>
-          <img src="{pitcher_src}" alt="Jarro J{index + 1}" />
+          <img src="{pitcher_src}" alt="Jarra J{index + 1}" />
         </div>
         <div class="jug-value">{amount} / {capacity} L</div>
         <div class="jug-delta">{escape(delta)}</div>
@@ -1134,13 +1175,13 @@ def format_state(state: State) -> str:
 
 def describe_goal(goal: GoalSpec) -> str:
     if goal.mode == "any_jug":
-        return f"{goal.target} L em pelo menos um jarro"
+        return f"{goal.target} L em pelo menos uma jarra"
     if goal.mode == "selected_sum":
         indices = goal.selected_indices or ()
-        selected = ", ".join(f"J{index + 1}" for index in indices) if indices else "todos os jarros"
+        selected = ", ".join(f"J{index + 1}" for index in indices) if indices else "todas as jarras"
         return f"{goal.target} L na soma de {selected}"
     if goal.mode == "any_combination":
-        return f"{goal.target} L em qualquer combinação de jarros"
+        return f"{goal.target} L em qualquer combinação de jarras"
     if goal.mode == "exact_state":
         return f"Estado exacto: {format_state(goal.exact_state)}"
     return "Objectivo configurado"
@@ -1167,7 +1208,7 @@ def validate_reachability_hint(
         messages.append(("warning", f"O espaço pode chegar a {size:,} estados; considere reduzir capacidades ou limite.".replace(",", " ")))
 
     if goal.mode == "selected_sum" and not goal.selected_indices:
-        messages.append(("error", "Seleccione pelo menos um jarro para o objectivo por soma."))
+        messages.append(("error", "Seleccione pelo menos uma jarra para o objectivo por soma."))
 
     if reachability.possible is False:
         messages.append(("error", reachability.reason))
@@ -1344,17 +1385,49 @@ def inject_theme() -> None:
           .hero-photo-jug-b .hero-water-window span {
             height: 42%;
           }
-          .hero-stream {
+          .hero-exchange {
             position: absolute;
             left: 102px;
-            top: 58px;
+            top: 48px;
             width: 88px;
-            height: 10px;
-            border-radius: 999px;
+            height: 44px;
             transform: rotate(14deg);
+          }
+          .hero-stream {
+            position: absolute;
+            left: 0;
+            width: 88px;
+            height: 7px;
+            border-radius: 999px;
             background: repeating-linear-gradient(90deg, rgba(14,165,233,0), rgba(14,165,233,0) 0 8px, rgba(14,165,233,.92) 8px 24px, rgba(125,249,255,.9) 24px 36px);
             filter: drop-shadow(0 6px 8px rgba(14, 116, 144, .18));
             animation: heroStream 900ms linear infinite;
+          }
+          .hero-stream:after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            width: 0;
+            height: 0;
+            transform: translateY(-50%);
+            border-top: 6px solid transparent;
+            border-bottom: 6px solid transparent;
+          }
+          .hero-stream-out {
+            top: 8px;
+          }
+          .hero-stream-out:after {
+            right: -11px;
+            border-left: 12px solid rgba(14,165,233,.95);
+          }
+          .hero-stream-in {
+            bottom: 8px;
+            animation-direction: reverse;
+            background: repeating-linear-gradient(270deg, rgba(139,124,246,0), rgba(139,124,246,0) 0 8px, rgba(139,124,246,.82) 8px 24px, rgba(125,249,255,.88) 24px 36px);
+          }
+          .hero-stream-in:after {
+            left: -11px;
+            border-right: 12px solid rgba(139,124,246,.9);
           }
           @keyframes heroWave {
             0%, 100% { transform: translateX(0) scaleY(1); }
